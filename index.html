@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biogeo DataLab - Auditoria Dietètica</title>
+    
+    <!-- CDNs -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .chart-container { height: 300px; width: 100%; }
+    </style>
+</head>
+<body class="bg-stone-100 text-stone-800 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { 
+            BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
+            PieChart, Pie, Cell, LabelList, Label 
+        } = window.Recharts || {};
+
+        // --- MOCK DATA (Fallback) ---
+        const MOCK_CSV = `Id,Nom,Sexe,Grup edat,Activitat física,Vegetals >50%?,Proteïna saludable?,Cereal integral?,Vegetals >50%?1,Proteïna saludable? 1,Cereal integral?1,Vegetals >50%?2,Proteïna saludable? 2,Cereal integral?2,Vegetals >50%?3,Proteïna saludable? 3,Cereal integral?3,Vegetals >50%?4,Proteïna saludable? 4,Cereal integral?4,Ha estat l’aigua de l’aixeta la beguda principal?,Ha estat l’aigua embotellada la beguda principal?,S’ha utilitzat oli d’oliva per a cuinar o amanir?,Proximitat: Productes de temporada i cultiu local/regional.,Diversitat:Varietat de fruites, hortalisses o llegums del territori,Residus,Processats
+1,Marc,Home,Adolescent,Activa,Sí,Sí,No,Sí,No,No,Sí,Sí,Sí,No,No,No,No,No,No,Sí,No,Sí,Sí,Alta,Mínims,No
+2,Laia,Dona,Adolescent,Molt Activa,Sí,Sí,Sí,Sí,Sí,No,No,Sí,No,Sí,Sí,Sí,No,No,No,Sí,No,Sí,Sí,Alta,Mínims,No`;
+
+        // --- UTILS ---
+        const parseCSV = (text) => {
+            const cleanText = text.replace(/^\uFEFF/, '');
+            const firstLine = cleanText.split(/\r?\n/)[0];
+            const delimiter = firstLine.includes(';') ? ';' : ',';
+            const rows = [];
+            let currentRow = [];
+            let currentField = '';
+            let inQuotes = false;
+
+            for (let i = 0; i < cleanText.length; i++) {
+                const char = cleanText[i];
+                const nextChar = cleanText[i + 1];
+                if (char === '"' && inQuotes && nextChar === '"') { currentField += '"'; i++; }
+                else if (char === '"') { inQuotes = !inQuotes; }
+                else if (char === delimiter && !inQuotes) { currentRow.push(currentField.trim()); currentField = ''; }
+                else if ((char === '\r' || char === '\n') && !inQuotes) {
+                    if (currentField || currentRow.length > 0) { currentRow.push(currentField.trim()); rows.push(currentRow); }
+                    currentRow = []; currentField = '';
+                    if (char === '\r' && nextChar === '\n') i++;
+                } else { currentField += char; }
+            }
+            if (currentField || currentRow.length > 0) { currentRow.push(currentField.trim()); rows.push(currentRow); }
+            if (rows.length < 2) return [];
+            const headers = rows[0].map(h => h.trim());
+            return rows.slice(1).map(row => {
+                const obj = {};
+                headers.forEach((h, i) => { if (h) obj[h] = row[i] ? row[i].trim() : ''; });
+                return obj;
+            });
+        };
+
+        const IconUpload = () => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        );
+
+        const ChartCard = ({ title, children, scaffolding }) => (
+            <div className="bg-white rounded-2xl shadow-sm border border-stone-200 overflow-hidden flex flex-col md:flex-row">
+                <div className="p-6 flex-1 border-b md:border-b-0 md:border-r border-stone-100">
+                    <h3 className="text-lg font-bold mb-4 text-stone-700">{title}</h3>
+                    <div className="chart-container"><ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer></div>
+                </div>
+                <div className="p-6 bg-stone-50 w-full md:w-72 flex flex-col justify-center">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-stone-400 mb-3">Preguntes Guia</h4>
+                    <div className="text-sm text-stone-600 space-y-3 italic leading-relaxed">{scaffolding.map((q, i) => <p key={i}>• {q}</p>)}</div>
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [data, setData] = React.useState([]);
+            const [fileName, setFileName] = React.useState("Dades de mostra");
+            const [activeTab, setActiveTab] = React.useState("dashboard");
+            const [varX, setVarX] = React.useState("Activitat física");
+            const [varY, setVarY] = React.useState("Sexe");
+
+            const findCol = React.useCallback((pattern) => {
+                if (!data || data.length === 0) return pattern;
+                const keys = Object.keys(data[0]);
+                const clean = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const cleanPattern = clean(pattern);
+                let found = keys.find(k => clean(k) === cleanPattern);
+                if (!found) found = keys.find(k => k.toLowerCase().includes(pattern.toLowerCase()));
+                if (!found) found = keys.find(k => clean(k).includes(cleanPattern) || cleanPattern.includes(clean(k)));
+                return found || pattern;
+            }, [data]);
+
+            const isYes = (val) => {
+                if (!val) return false;
+                const s = val.toString().toLowerCase().trim();
+                return s === 'sí' || s === 'si' || s === 'yes' || s === 'true' || s === '1';
+            };
+
+            React.useEffect(() => {
+                setData(parseCSV(MOCK_CSV));
+                fetch('data.csv').then(r => r.ok ? r.text() : Promise.reject()).then(t => {
+                    const p = parseCSV(t);
+                    if (p.length > 0) { setData(p); setFileName("data.csv carregat"); }
+                }).catch(() => console.log("Usant dades de mostra."));
+            }, []);
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const p = parseCSV(ev.target.result);
+                    if (p.length > 0) { setData(p); setFileName(file.name); }
+                };
+                reader.readAsText(file);
+            };
+
+            const processedData = React.useMemo(() => {
+                if (data.length === 0) return null;
+                const vegCols = [findCol('Vegetals >50%?'), findCol('Vegetals >50%?1'), findCol('Vegetals >50%?2'), findCol('Vegetals >50%?3'), findCol('Vegetals >50%?4')];
+                const proCols = [findCol('Proteïna saludable?'), findCol('Proteïna saludable? 1'), findCol('Proteïna saludable? 2'), findCol('Proteïna saludable? 3'), findCol('Proteïna saludable? 4')];
+                const cerCols = [findCol('Cereal integral?'), findCol('Cereal integral?1'), findCol('Cereal integral?2'), findCol('Cereal integral?3'), findCol('Cereal integral?4')];
+                const ageCol = findCol('Grup edat'), activityCol = findCol('Activitat física'), waterTapCol = findCol('Ha estat l’aigua de l’aixeta la beguda principal?'), waterBottleCol = findCol('Ha estat l’aigua embotellada la beguda principal?'), oliveOilCol = findCol('S’ha utilitzat oli d’oliva per a cuinar o amanir?'), proximityCol = findCol('Proximitat'), diversityCol = findCol('Diversitat');
+                
+                let totalIntakes = 0, totalVeg = 0, totalPro = 0, totalCer = 0, waterTap = 0, waterBottle = 0, oliveOilCount = 0, proximityCount = 0, highDiversityCount = 0;
+                const ageStats = {}, activityStats = {};
+
+                data.forEach(row => {
+                    let userScore = 0, userIntakes = 0;
+                    vegCols.forEach((col, idx) => {
+                        if (row[col] || row[proCols[idx]] || row[cerCols[idx]]) {
+                            userIntakes++;
+                            if (isYes(row[col])) { totalVeg++; userScore++; }
+                            if (isYes(row[proCols[idx]])) { totalPro++; userScore++; }
+                            if (isYes(row[cerCols[idx]])) { totalCer++; userScore++; }
+                        }
+                    });
+                    totalIntakes += userIntakes;
+                    const age = row[ageCol] || "N/A"; if (!ageStats[age]) ageStats[age] = { sum: 0, count: 0 }; ageStats[age].sum += userScore; ageStats[age].count++;
+                    const act = row[activityCol] || "N/A"; if (!activityStats[act]) activityStats[act] = { sum: 0, count: 0 }; activityStats[act].sum += userScore; activityStats[act].count++;
+                    if (isYes(row[waterTapCol])) waterTap++; if (isYes(row[waterBottleCol])) waterBottle++; if (isYes(row[oliveOilCol])) oliveOilCount++; if (isYes(row[proximityCol])) proximityCount++;
+                    if ((row[diversityCol] || '').toString().toLowerCase() === 'alta') highDiversityCount++;
+                });
+
+                return {
+                    plate: [{ name: 'Vegetals', value: Math.round((totalVeg / (totalIntakes || 1)) * 100), fill: '#22c55e' }, { name: 'Proteïna', value: Math.round((totalPro / (totalIntakes || 1)) * 100), fill: '#ef4444' }, { name: 'Cereals', value: Math.round((totalCer / (totalIntakes || 1)) * 100), fill: '#eab308' }],
+                    age: Object.keys(ageStats).map(n => ({ name: n, mitjana: Number((ageStats[n].sum / (ageStats[n].count || 1)).toFixed(2)) })).sort((a,b) => a.name.localeCompare(b.name)),
+                    sustainability: [{ name: 'Proximitat', value: Math.round((proximityCount / data.length) * 100), fill: '#0ea5e9' }, { name: 'Diversitat Alta', value: Math.round((highDiversityCount / data.length) * 100), fill: '#6366f1' }],
+                    water: [{ name: 'Aixeta', value: waterTap }, { name: 'Embotellada', value: waterBottle }],
+                    oliveOil: Math.round((oliveOilCount / data.length) * 100),
+                    activity: Object.keys(activityStats).map(n => ({ name: n, score: Number((activityStats[n].sum / (activityStats[n].count || 1)).toFixed(2)) })).sort((a,b) => a.name.localeCompare(b.name))
+                };
+            }, [data, findCol]);
+
+            const explorerVariables = [
+                { label: "Activitat física", col: "Activitat física" }, { label: "Grup d'edat", col: "Grup edat" }, { label: "Sexe", col: "Sexe" }, { label: "Vegetals >50%", col: "Vegetals >50%?" }, { label: "Proteïna saludable", col: "Proteïna saludable?" }, { label: "Cereal integral", col: "Cereal integral?" }, { label: "Proximitat", col: "Proximitat" }, { label: "Diversitat", col: "Diversitat" }, { label: "Aigua principal", col: "Ha estat l’aigua de l’aixeta la beguda principal?" }
+            ];
+
+            const explorerData = React.useMemo(() => {
+                if (data.length === 0) return [];
+                const colX = findCol(varX), colY = findCol(varY), map = {};
+                data.forEach(row => { const x = row[colX] || "N/A", y = row[colY] || "N/A"; if (!map[x]) map[x] = {}; map[x][y] = (map[x][y] || 0) + 1; });
+                const allY = [...new Set(data.map(row => row[colY] || "N/A"))];
+                return Object.keys(map).map(x => { const e = { name: x }; allY.forEach(y => e[y] = map[x][y] || 0); return e; });
+            }, [data, varX, varY, findCol]);
+
+            if (!processedData) return <div className="p-10 text-center">Carregant dades...</div>;
+
+            return (
+                <div className="max-w-7xl mx-auto px-4 py-8">
+                    <header className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-6">
+                        <div><h1 className="text-4xl font-black text-stone-900 tracking-tight mb-2">Biogeo <span className="text-emerald-600">DataLab</span></h1><p className="text-stone-500 font-medium">Auditoria Dietètica de 24 hores • 3r ESO</p></div>
+                        <div className="flex flex-col items-end gap-2">
+                            <label className="cursor-pointer bg-white border-2 border-stone-200 hover:border-emerald-500 hover:text-emerald-600 transition-all px-6 py-3 rounded-xl shadow-sm flex items-center gap-3 font-bold text-stone-600"><IconUpload />Pujar CSV<input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" /></label>
+                            <div className="flex items-center gap-2"><span className="px-2 py-0.5 bg-stone-200 text-stone-600 rounded text-[10px] font-bold uppercase tracking-wider">{data.length} registres</span><span className="text-xs font-bold text-stone-400 uppercase tracking-widest">{fileName}</span></div>
+                        </div>
+                    </header>
+                    <nav className="flex gap-2 mb-8 bg-stone-200 p-1 rounded-xl w-fit">
+                        <button onClick={() => setActiveTab('dashboard')} className={`px-6 py-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'dashboard' ? 'bg-white text-emerald-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>📊 Dashboard</button>
+                        <button onClick={() => setActiveTab('explorer')} className={`px-6 py-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'explorer' ? 'bg-white text-emerald-600 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>🔍 Explorador</button>
+                    </nav>
+                    {activeTab === 'dashboard' ? (
+                        <div className="grid grid-cols-1 gap-8">
+                            <ChartCard title="1. Composició del Plat Saludable (%)" scaffolding={["Quin aspecte saludable és el més freqüent?", "S'apropa la majoria al model ideal de 50-25-25?"]}><BarChart layout="vertical" data={processedData.plate} margin={{ left: 20, right: 40 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f1f1" /><XAxis type="number" domain={[0, 100]} hide /><YAxis dataKey="name" type="category" width={80} axisLine={false} tickLine={false} /><Tooltip cursor={{fill: 'transparent'}} /><Bar dataKey="value" radius={[0, 4, 4, 0]}><LabelList dataKey="value" position="right" formatter={(v) => `${v}%`} /></Bar></BarChart></ChartCard>
+                            <ChartCard title="2. Comparativa d'Índex Saludable per Edat" scaffolding={["Quin grup presenta millors resultats globals?", "A què creus que es pot deure aquesta diferència?"]}><BarChart data={processedData.age} margin={{ top: 20, bottom: 20, left: 10 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f1f1" /><XAxis dataKey="name" axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false}><Label value="Índex Saludable" angle={-90} position="insideLeft" style={{ textAnchor: 'middle', fill: '#a8a29e', fontSize: '11px', fontWeight: 'bold' }} /></YAxis><Tooltip cursor={{fill: '#f9f8f6'}} /><Bar dataKey="mitjana" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={60}><LabelList dataKey="mitjana" position="top" /></Bar></BarChart></ChartCard>
+                            <ChartCard title="3. Sostenibilitat (%)" scaffolding={["Predomina el consum local?", "Quin indicador és el més feble?"]}><BarChart layout="vertical" data={processedData.sustainability} margin={{ left: 40, right: 40 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f1f1" /><XAxis type="number" domain={[0, 100]} hide /><YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} /><Tooltip cursor={{fill: 'transparent'}} /><Bar dataKey="value" radius={[0, 4, 4, 0]}><LabelList dataKey="value" position="right" formatter={(v) => `${v}%`} /></Bar></BarChart></ChartCard>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <ChartCard title="4. Beguda Principal" scaffolding={["L'oli d'oliva s'usa en un " + processedData.oliveOil + "%."]}><PieChart><Pie data={processedData.water} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value"><Cell fill="#0ea5e9" /><Cell fill="#f43f5e" /></Pie><Tooltip /><Legend verticalAlign="bottom" height={36}/></PieChart></ChartCard>
+                                <ChartCard title="5. Activitat Física vs Dieta" scaffolding={["Existeix relació entre activitat i dieta?"]}><BarChart data={processedData.activity} margin={{ top: 20, bottom: 20, left: 10 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f1f1" /><XAxis dataKey="name" axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false}><Label value="Puntuació Dieta" angle={-90} position="insideLeft" style={{ textAnchor: 'middle', fill: '#a8a29e', fontSize: '11px', fontWeight: 'bold' }} /></YAxis><Tooltip cursor={{fill: '#f9f8f6'}} /><Bar dataKey="score" fill="#10b981" radius={[4, 4, 0, 0]} barSize={40}><LabelList dataKey="score" position="top" /></Bar></BarChart></ChartCard>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-8">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+                                <h2 className="text-xl font-bold mb-6 text-stone-700 flex items-center gap-2">🧪 Investiga Relacions</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                                    <div className="space-y-2"><label className="text-xs font-bold text-stone-400 uppercase tracking-wider">Variable X</label><select value={varX} onChange={(e) => setVarX(e.target.value)} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl font-medium text-stone-700 outline-emerald-500">{explorerVariables.map(v => <option key={v.label} value={v.col}>{v.label}</option>)}</select></div>
+                                    <div className="space-y-2"><label className="text-xs font-bold text-stone-400 uppercase tracking-wider">Variable Y (Colors)</label><select value={varY} onChange={(e) => setVarY(e.target.value)} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl font-medium text-stone-700 outline-emerald-500">{explorerVariables.map(v => <option key={v.label} value={v.col}>{v.label}</option>)}</select></div>
+                                </div>
+                                <div className="h-[400px] w-full mt-8"><ResponsiveContainer width="100%" height="100%"><BarChart data={explorerData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f1f1" /><XAxis dataKey="name" axisLine={false} tickLine={false} /><YAxis axisLine={false} tickLine={false} /><Tooltip /><Legend />{Object.keys(explorerData[0] || {}).filter(k => k !== 'name').map((key, index) => (<Bar key={key} dataKey={key} stackId="a" fill={['#10b981', '#6366f1', '#f59e0b', '#ef4444', '#0ea5e9', '#ec4899'][index % 6]} />))}</BarChart></ResponsiveContainer></div>
+                            </div>
+                            <div className="bg-emerald-50 p-6 rounded-2xl border border-emerald-100"><h4 className="font-bold text-emerald-800 mb-2">Com interpretar-ho?</h4><p className="text-emerald-700 text-sm italic">Aquest gràfic et permet veure com es distribueix la segona variable dins de cada categoria de la primera. Recorda: <strong>Correlació no implica causalitat!</strong></p></div>
+                        </div>
+                    )}
+                    <footer className="mt-16 pt-8 border-t border-stone-200 text-center text-stone-400 text-sm font-medium">Biogeo DataLab © 2024</footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
